@@ -14,6 +14,7 @@ AZ_SQL_SERVER   = os.getenv("AZ_SQL_SERVER")              # ex: myserver.databas
 AZ_SQL_DB       = os.getenv("AZ_SQL_DB")
 AZ_SQL_USER     = os.getenv("AZ_SQL_USER")                # ex: user@myserver
 AZ_SQL_PASSWORD = os.getenv("AZ_SQL_PASSWORD")
+TDS_VERSION     = os.getenv("TDS_VERSION", "7.3")         # pymssql supports up to 7.3 (Azure accepts it)
 
 DBX_ENDPOINT_URL = os.getenv("DATABRICKS_ENDPOINT_URL", "").rstrip("/")  # .../serving-endpoints/<name>/invocations
 DBX_TOKEN        = os.getenv("DATABRICKS_TOKEN", "")
@@ -51,7 +52,10 @@ def get_engine():
 
     user_q = quote_plus(AZ_SQL_USER)
     pwd_q  = quote_plus(AZ_SQL_PASSWORD)
-    sql_url = f"mssql+pymssql://{user_q}:{pwd_q}@{AZ_SQL_SERVER}:1433/{AZ_SQL_DB}?tds_version=7.4&charset=utf8"
+    # pymssql raises on unsupported TDS versions (7.4 is not accepted); cap to 7.3 which works with Azure SQL
+    allowed_tds = {"7.0", "7.1", "7.2", "7.3"}
+    tds = TDS_VERSION if TDS_VERSION in allowed_tds else "7.3"
+    sql_url = f"mssql+pymssql://{user_q}:{pwd_q}@{AZ_SQL_SERVER}:1433/{AZ_SQL_DB}?tds_version={tds}&charset=utf8"
 
     _engine = create_engine(
         sql_url,
