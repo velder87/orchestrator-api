@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: ai-agent-orchestrator
+    env: python
+    plan: starter
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # Azure SQL
+      - key: AZ_SQL_SERVER
+        sync: false
+      - key: AZ_SQL_DB
+        sync: false
+      - key: AZ_SQL_USER
+        sync: false
+      - key: AZ_SQL_PASSWORD
+        sync: false
+      # Databricks Serving
+      - key: DATABRICKS_ENDPOINT_URL
+        sync: false
+      - key: DATABRICKS_TOKEN
+        sync: false
+      # LLM (Azure OpenAI recommandé)
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
+      - key: AZURE_OPENAI_DEPLOYMENT
+        value: gpt-4o-mini
+      # (ou OpenAI direct)
+      - key: OPENAI_API_KEY
+        sync: false
