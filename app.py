@@ -1,4 +1,4 @@
-import os, json, requests
+import os, json, requests, re
 from typing import Any, Dict, Optional
 from urllib.parse import quote_plus
 
@@ -65,9 +65,15 @@ def get_engine():
 
 # -------- Tools --------
 def guard_sql(q: str):
-    ql = f" {q.lower()} "
-    banned = [" drop ", " delete ", " update ", " insert ", " alter ", " create ", " truncate ", " merge "]
-    if any(b in ql for b in banned):
+    """Reject non-read-only SQL statements."""
+
+    # Reject multiple statements even if keywords are obfuscated with punctuation.
+    # Example: "SELECT 1;DROP TABLE users" should be blocked.
+    if ";" in q:
+        raise HTTPException(status_code=400, detail="Only read-only SELECT queries are allowed.")
+
+    banned_pattern = r"\b(drop|delete|update|insert|alter|create|truncate|merge)\b"
+    if re.search(banned_pattern, q, flags=re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Only read-only SELECT queries are allowed.")
 
 def run_sql(query: str) -> Dict[str, Any]:
