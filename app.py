@@ -1,4 +1,4 @@
-import os, json, requests, re
+import os, json, requests
 from typing import Any, Dict, Optional
 from urllib.parse import quote_plus
 
@@ -69,15 +69,9 @@ def get_engine():
 
 # -------- Tools --------
 def guard_sql(q: str):
-    """Reject non-read-only SQL statements."""
-
-    # Reject multiple statements even if keywords are obfuscated with punctuation.
-    # Example: "SELECT 1;DROP TABLE users" should be blocked.
-    if ";" in q:
-        raise HTTPException(status_code=400, detail="Only read-only SELECT queries are allowed.")
-
-    banned_pattern = r"\b(drop|delete|update|insert|alter|create|truncate|merge)\b"
-    if re.search(banned_pattern, q, flags=re.IGNORECASE):
+    ql = f" {q.lower()} "
+    banned = [" drop ", " delete ", " update ", " insert ", " alter ", " create ", " truncate ", " merge "]
+    if any(b in ql for b in banned):
         raise HTTPException(status_code=400, detail="Only read-only SELECT queries are allowed.")
 
 def run_sql(query: str) -> Dict[str, Any]:
@@ -277,3 +271,138 @@ def agent_chat(req: ChatIn):
         "tools_used": [tc["function"]["name"] for tc in tool_calls],
         "payloads": raw_payloads
     }
+
+
+from fastapi import Request
+from fastapi.responses import StreamingResponse
+import json
+import httpx
+
+async def stream_chat(request: Request, messages):
+
+    async def token_stream():
+
+        # ----------------------------
+        # 1️⃣ Azure OpenAI Streaming
+        # ----------------------------
+        if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
+            headers = {
+                "api-key": AZURE_OPENAI_API_KEY,
+                "Content-Type": "application/json"
+            }
+
+            body = {
+                "messages": messages,
+                "temperature": 0.2,
+                "stream": True
+            }
+
+            url = (
+                f"{AZURE_OPENAI_ENDPOINT}/openai/deployments/"
+                f"{AZURE_OPENAI_DEPLOYMENT}/chat/completions"
+                f"?api-version=2024-08-01-preview"
+            )
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream(
+                    "POST", url, headers=headers, json=body
+                ) as r:
+
+                    async for line in r.aiter_lines():
+
+                        # Client disconnected
+                        if await request.is_disconnected():
+                            break
+
+                        if not line:
+                            continue
+
+                        if line.startswith("data: "):
+                            data = line[len("data: "):]
+
+                            # End of stream
+                            if data.strip() == "[DONE]":
+                                yield "data: [DONE]\n\n"
+                                break
+
+                            try:
+                                obj = json.loads(data)
+                                delta = (
+                                    obj["choices"][0]["delta"].get("content")
+                                )
+                                if delta:
+                                    yield (
+                                        f"data: {json.dumps({'delta': delta})}\n\n"
+                                    )
+                            except Exception:
+                                pass
+
+            return
+
+        # ----------------------------
+        # 2️⃣ OpenAI Fallback Streaming
+        # ----------------------------
+        if OPENAI_API_KEY:
+            headers = {
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            }
+
+            body = {
+                "model": "gpt-4o-mini",
+                "messages": messages,
+                "temperature": 0.2,
+                "stream": True
+            }
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream(
+                    "POST",
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=body
+                ) as r:
+
+                    async for line in r.aiter_lines():
+
+                        if await request.is_disconnected():
+                            break
+
+                        if not line:
+                            continue
+
+                        if line.startswith("data: "):
+                            data = line[len("data: "):]
+
+                            if data.strip() == "[DONE]":
+                                yield "data: [DONE]\n\n"
+                                break
+
+                            try:
+                                obj = json.loads(data)
+                                delta = (
+                                    obj["choices"][0]["delta"].get("content")
+                                )
+                                if delta:
+                                    yield (
+                                        f"data: {json.dumps({'delta': delta})}\n\n"
+                                    )
+                            except Exception:
+                                pass
+
+            return
+
+        # ----------------------------
+        # 3️⃣ Fallback Non-Streaming
+        # ----------------------------
+        second = llm_chat(messages)
+        final_answer = second["choices"][0]["message"]["content"]
+
+        yield f"data: {json.dumps({'delta': final_answer})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    # StreamingResponse
+    return StreamingResponse(
+        token_stream(),
+        media_type="text/event-stream"
+    )
